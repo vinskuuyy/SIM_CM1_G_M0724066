@@ -1,0 +1,1016 @@
+---
+title: "Analisis Segmentasi Pelanggan Berbasis RFM pada Database Sakila Menggunakan K-Means Clustering"
+author: "Muhammad Alvin Thoriq Purnama Putra | M0724066 | Program Studi Statistika | Universitas Sebelas Maret"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+    df_print: paged
+    css: |
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 15px;
+        line-height: 1.75;
+        color: #2c3e50;
+        background-color: #fdfdfd;
+      }
+      h1, h2, h3 {
+        color: #1a5276;
+        border-bottom: 2px solid #d5e8f0;
+        padding-bottom: 6px;
+      }
+      .insight-box {
+        background: #eaf4fb;
+        border-left: 5px solid #2980b9;
+        padding: 14px 20px;
+        margin: 18px 0;
+        border-radius: 4px;
+      }
+      .warning-box {
+        background: #fef9e7;
+        border-left: 5px solid #f39c12;
+        padding: 14px 20px;
+        margin: 18px 0;
+        border-radius: 4px;
+      }
+      .limit-box {
+        background: #fdf2f8;
+        border-left: 5px solid #8e44ad;
+        padding: 14px 20px;
+        margin: 18px 0;
+        border-radius: 4px;
+      }
+      .theory-box {
+        background: #f0fdf4;
+        border-left: 5px solid #27ae60;
+        padding: 14px 20px;
+        margin: 18px 0;
+        border-radius: 4px;
+      }
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = TRUE,
+  warning   = FALSE,
+  message   = FALSE,
+  fig.align = "center",
+  fig.width  = 9,
+  fig.height = 5,
+  dpi = 120
+)
+```
+
+---
+
+# Latar Belakang
+
+<div class="insight-box">
+Industri penyewaan film menghadapi tekanan persaingan yang terus meningkat seiring pertumbuhan layanan *streaming* digital. Dalam kondisi seperti ini, kemampuan memahami perilaku pelanggan secara lebih terstruktur menjadi salah satu pertimbangan strategis yang relevan.
+
+Database **Sakila** merupakan basis data relasional sampel yang dikembangkan oleh MySQL untuk merepresentasikan sistem manajemen toko penyewaan film. Struktur relasionalnya mencakup tabel `customer`, `rental`, `payment`, `film`, `inventory`, dan entitas pendukung lain yang saling terhubung melalui *foreign key*. Meskipun merupakan data sintetis, Sakila memiliki struktur transaksi yang cukup realistis untuk keperluan eksplorasi analitik dan pembelajaran.
+
+Pendekatan yang digunakan adalah kerangka **RFM** (*Recency, Frequency, Monetary*) — metode segmentasi berbasis tiga metrik perilaku transaksi yang dikembangkan oleh Hughes (1994) dan telah banyak digunakan dalam literatur pemasaran kuantitatif. Nilai RFM setiap pelanggan kemudian menjadi fitur masukan algoritma **K-Means Clustering** untuk menghasilkan segmen yang dapat diinterpretasikan secara kontekstual.
+
+Perlu dicatat bahwa interpretasi yang dihasilkan dari analisis ini harus dilakukan dengan mempertimbangkan karakteristik data Sakila sebagai *sample database*, bukan data operasional nyata.
+</div>
+
+---
+
+# Rumusan Masalah
+
+1. Bagaimana distribusi perilaku pelanggan berdasarkan frekuensi transaksi dan total pengeluaran dalam database Sakila?
+2. Bagaimana profil RFM masing-masing pelanggan, dan seberapa heterogen distribusinya?
+3. Berapa jumlah cluster yang secara statistik memadai untuk segmentasi pelanggan ini?
+4. Apa karakteristik pembeda antara segmen yang terbentuk, diukur dari nilai RFM aktual?
+5. Segmen mana yang memiliki prioritas bisnis lebih tinggi berdasarkan profil RFM-nya?
+6. Rekomendasi operasional apa yang dapat diturunkan dari profil tiap segmen?
+
+---
+
+# Tujuan Analisis
+
+1. Mengeksplorasi karakteristik distribusi data transaksi Sakila secara deskriptif dan visual.
+2. Menghitung nilai RFM untuk seluruh pelanggan aktif dalam database.
+3. Menentukan jumlah cluster yang memadai menggunakan metode Elbow (WSS) dan Silhouette.
+4. Mengeksekusi K-Means Clustering dan mengevaluasi kualitasnya secara kuantitatif.
+5. Menginterpretasikan profil tiap segmen berdasarkan nilai RFM aktual.
+6. Merumuskan rekomendasi bisnis yang relevan untuk setiap segmen.
+
+---
+
+# Landasan Teori
+
+## Analisis RFM
+
+<div class="theory-box">
+Analisis RFM adalah teknik segmentasi pelanggan berbasis tiga metrik perilaku transaksi:
+
+- **Recency (R):** Selisih hari antara tanggal referensi dan transaksi terakhir pelanggan. Nilai Recency yang lebih kecil menandakan pelanggan yang lebih baru-baru ini aktif, sehingga diasumsikan lebih mungkin merespons komunikasi pemasaran.
+- **Frequency (F):** Jumlah total transaksi yang dilakukan pelanggan dalam periode observasi. Frekuensi yang lebih tinggi dapat mengindikasikan kebiasaan transaksi yang konsisten.
+- **Monetary (M):** Total nilai pembayaran kumulatif pelanggan selama periode pengamatan. Metrik ini merupakan proksi terhadap kontribusi finansial pelanggan terhadap bisnis.
+
+Ketiga metrik ini secara bersama-sama membentuk representasi perilaku transaksi setiap pelanggan yang dapat digunakan sebagai dasar segmentasi (Hughes, 1994).
+</div>
+
+## K-Means Clustering
+
+<div class="theory-box">
+K-Means adalah algoritma clustering partisi yang meminimalkan *within-cluster sum of squares* (WCSS):
+
+$$\underset{S}{\arg\min} \sum_{k=1}^{K} \sum_{\mathbf{x} \in S_k} \|\mathbf{x} - \boldsymbol{\mu}_k\|^2$$
+
+di mana $S_k$ adalah himpunan titik dalam cluster $k$ dan $\boldsymbol{\mu}_k$ adalah centroidnya. Algoritma ini bersifat iteratif: inisialisasi centroid → penugasan titik ke centroid terdekat → pembaruan centroid → diulang hingga konvergen (Hartigan & Wong, 1979).
+
+Salah satu keterbatasan K-Means adalah sensitivitasnya terhadap nilai awal centroid dan keberadaan outlier. Oleh karena itu, penggunaan parameter `nstart` yang cukup besar dan normalisasi data menjadi langkah penting sebelum menjalankan algoritma.
+</div>
+
+## Metode Elbow dan Silhouette
+
+<div class="theory-box">
+**Elbow Method** memplot total WSS terhadap jumlah cluster $k$. Titik "siku" — tempat penurunan WSS mulai melambat secara signifikan — menjadi indikasi jumlah cluster yang relatif efisien. Meski demikian, titik siku tidak selalu terlihat jelas dan memerlukan pertimbangan subjektif.
+
+**Silhouette Score** (Rousseeuw, 1987) memberikan ukuran kualitas clustering yang lebih formal:
+
+$$s(i) = \frac{b(i) - a(i)}{\max\{a(i), b(i)\}}$$
+
+di mana $a(i)$ adalah rata-rata jarak intra-cluster dan $b(i)$ adalah rata-rata jarak ke cluster terdekat. Nilai $s(i) \in [-1, 1]$; nilai yang mendekati 1 menunjukkan bahwa observasi tersebut berada di posisi yang sesuai dalam clusternya. Kaufman & Rousseeuw (1990) menyarankan nilai rata-rata > 0.70 sebagai indikasi struktur cluster yang cukup baik, meskipun ambang ini tidak bersifat mutlak.
+</div>
+
+---
+
+# Persiapan Data
+
+## Memuat Package
+
+```{r packages}
+# Package yang dibutuhkan
+pkgs <- c("tidyverse", "lubridate", "cluster", "factoextra",
+          "scales", "knitr", "kableExtra", "RColorBrewer", "DBI", "odbc")
+
+# Install hanya yang belum ada
+new_pkgs <- pkgs[!pkgs %in% installed.packages()[, "Package"]]
+if (length(new_pkgs) > 0) install.packages(new_pkgs, repos = "https://cran.rstudio.com/")
+
+# Load semua
+suppressPackageStartupMessages(
+  invisible(lapply(pkgs, library, character.only = TRUE))
+)
+
+# Tema ggplot2 global
+theme_set(
+  theme_minimal(base_size = 13) +
+    theme(
+      plot.title    = element_text(face = "bold", size = 14, color = "#1a5276"),
+      plot.subtitle = element_text(color = "#666", size = 11),
+      axis.title    = element_text(color = "#333"),
+      legend.position = "bottom"
+    )
+)
+
+cat("Semua package berhasil dimuat.\n")
+```
+
+## Koneksi ke Database MySQL Sakila
+
+```{r load-data}
+library(DBI)
+library(odbc)
+
+con <- dbConnect(
+  odbc(),
+  Driver   = "MySQL ODBC 8.0 ANSI Driver",
+  Server   = "127.0.0.1",
+  UID      = "root",
+  PWD      = "54915329",       # sesuaikan password MySQL
+  Port     = 3306,
+  Database = "sakila"
+)
+
+customer      <- dbGetQuery(con, "SELECT * FROM customer")
+rental        <- dbGetQuery(con, "SELECT * FROM rental")
+payment       <- dbGetQuery(con, "SELECT * FROM payment")
+film          <- dbGetQuery(con, "SELECT * FROM film")
+film_category <- dbGetQuery(con, "SELECT * FROM film_category")
+category      <- dbGetQuery(con, "SELECT * FROM category")
+inventory     <- dbGetQuery(con, "SELECT * FROM inventory")
+
+dbDisconnect(con)
+
+cat("Dataset berhasil dimuat dari MySQL.\n")
+cat(sprintf("  customer : %d baris\n", nrow(customer)))
+cat(sprintf("  rental   : %d baris\n", nrow(rental)))
+cat(sprintf("  payment  : %d baris\n", nrow(payment)))
+```
+
+---
+
+# Pemahaman Data (*Data Understanding*)
+
+## Struktur Dataset Utama
+
+```{r data-understanding}
+cat("=== RENTAL ===\n")
+glimpse(rental)
+
+cat("\n=== PAYMENT ===\n")
+glimpse(payment)
+
+cat("\n=== CUSTOMER ===\n")
+glimpse(customer)
+```
+
+## Statistik Deskriptif Payment
+
+```{r payment-summary}
+summary(payment[, c("customer_id", "amount")]) %>%
+  kable(caption = "Statistik Deskriptif Tabel Payment") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+<div class="warning-box">
+**Konteks nilai `amount`:** Setiap baris pada tabel payment Sakila merepresentasikan satu transaksi rental individual dengan kisaran nilai $0–$11.99. Nilai ini mencerminkan harga sewa per film, bukan tagihan agregat. Total Monetary per pelanggan diperoleh dari akumulasi seluruh transaksi individual mereka selama periode pengamatan.
+</div>
+
+---
+
+# Eksplorasi Data (EDA)
+
+## Preprocessing Tanggal
+
+```{r preprocess-date}
+# Konversi eksplisit ke POSIXct
+rental <- rental %>%
+  mutate(
+    rental_date      = as.POSIXct(rental_date, tz = "UTC"),
+    return_date      = as.POSIXct(return_date, tz = "UTC"),
+    rental_date_only = as.Date(rental_date)
+  )
+
+payment <- payment %>%
+  mutate(payment_date = as.POSIXct(payment_date, tz = "UTC"))
+
+# Tanggal referensi: T+1 dari transaksi rental terakhir
+ref_date <- max(rental$rental_date, na.rm = TRUE) + lubridate::days(1)
+
+cat(sprintf("Tanggal referensi : %s\n", format(ref_date, "%d %B %Y")))
+cat(sprintf("Rental paling awal: %s\n", format(min(rental$rental_date, na.rm=TRUE), "%d %b %Y")))
+cat(sprintf("Rental paling akhir: %s\n", format(max(rental$rental_date, na.rm=TRUE), "%d %b %Y")))
+cat(sprintf("Total rentang data : %d hari\n",
+    as.integer(difftime(max(rental$rental_date, na.rm=TRUE),
+                        min(rental$rental_date, na.rm=TRUE), units="days"))))
+```
+
+## Distribusi Frekuensi Rental per Pelanggan
+
+```{r eda-freq}
+rental_freq <- rental %>%
+  group_by(customer_id) %>%
+  summarise(jumlah_rental = n(), .groups = "drop")
+
+rata2_freq <- mean(rental_freq$jumlah_rental)
+med_freq   <- median(rental_freq$jumlah_rental)
+sd_freq    <- sd(rental_freq$jumlah_rental)
+cv_freq    <- sd_freq / rata2_freq
+
+ggplot(rental_freq, aes(x = jumlah_rental)) +
+  geom_histogram(binwidth = 3, fill = "#2980b9", color = "white", alpha = 0.85) +
+  geom_vline(xintercept = rata2_freq, color = "#e74c3c",
+             linetype = "dashed", linewidth = 1) +
+  geom_vline(xintercept = med_freq, color = "#f39c12",
+             linetype = "dotted", linewidth = 1) +
+  annotate("text", x = rata2_freq + 4, y = 55,
+           label = paste0("Mean: ", round(rata2_freq, 1)),
+           color = "#e74c3c", size = 3.4, fontface = "bold") +
+  annotate("text", x = med_freq - 4.5, y = 55,
+           label = paste0("Median: ", round(med_freq, 1)),
+           color = "#f39c12", size = 3.4, fontface = "bold") +
+  labs(
+    title    = "Distribusi Frekuensi Rental per Pelanggan",
+    subtitle = sprintf("n = %d pelanggan | rentang: %d–%d kali | SD: %.1f | CV: %.2f",
+                       nrow(rental_freq),
+                       min(rental_freq$jumlah_rental),
+                       max(rental_freq$jumlah_rental),
+                       sd_freq, cv_freq),
+    x = "Jumlah Rental", y = "Jumlah Pelanggan"
+  )
+```
+
+<div class="insight-box">
+Distribusi frekuensi rental berkisar antara **`r min(rental_freq$jumlah_rental)`** hingga **`r max(rental_freq$jumlah_rental)`** kali per pelanggan, dengan rata-rata `r round(rata2_freq,1)` dan median `r round(med_freq,1)`. Standar deviasi sebesar `r round(sd_freq,1)` dan *coefficient of variation* (CV) `r round(cv_freq,2)` menunjukkan variasi yang moderat. Kedekatan nilai mean dan median mengindikasikan distribusi yang relatif simetris, tanpa dominasi ekstrem pada salah satu ujung distribusi.
+</div>
+
+## Distribusi Total Pengeluaran per Pelanggan
+
+```{r eda-monetary}
+monetary_dist <- payment %>%
+  group_by(customer_id) %>%
+  summarise(total_bayar = sum(amount, na.rm = TRUE), .groups = "drop")
+
+q1_m <- quantile(monetary_dist$total_bayar, 0.25)
+q3_m <- quantile(monetary_dist$total_bayar, 0.75)
+iqr_m <- q3_m - q1_m
+batas_outlier <- q3_m + 1.5 * iqr_m
+n_outlier <- sum(monetary_dist$total_bayar > batas_outlier)
+sd_monetary <- sd(monetary_dist$total_bayar)
+cv_monetary <- sd_monetary / mean(monetary_dist$total_bayar)
+
+ggplot(monetary_dist, aes(x = total_bayar)) +
+  geom_histogram(bins = 35, fill = "#27ae60", color = "white", alpha = 0.85) +
+  geom_vline(xintercept = median(monetary_dist$total_bayar),
+             color = "#e74c3c", linetype = "dashed", linewidth = 1) +
+  scale_x_continuous(labels = label_dollar()) +
+  labs(
+    title    = "Distribusi Total Pengeluaran per Pelanggan",
+    subtitle = sprintf("Min: $%.2f | Median: $%.2f | Max: $%.2f | SD: $%.2f | CV: %.2f",
+                       min(monetary_dist$total_bayar),
+                       median(monetary_dist$total_bayar),
+                       max(monetary_dist$total_bayar),
+                       sd_monetary, cv_monetary),
+    x = "Total Pengeluaran (USD)", y = "Jumlah Pelanggan"
+  )
+```
+
+<div class="insight-box">
+Total pengeluaran kumulatif per pelanggan berada di kisaran **$`r round(min(monetary_dist$total_bayar),0)`–$`r round(max(monetary_dist$total_bayar),0)`**. IQR sebesar $`r round(iqr_m,2)` dan CV `r round(cv_monetary,2)` menunjukkan variasi yang relatif moderat. Terdapat **`r n_outlier` pelanggan** dengan pengeluaran di atas ambang Tukey ($`r round(batas_outlier,2)`). Jumlah ini tergolong kecil dibandingkan total populasi, sehingga pengaruhnya terhadap posisi centroid clustering kemungkinan tidak terlalu besar, meskipun K-Means tetap sensitif terhadap nilai ekstrem.
+</div>
+
+## Top 15 Pelanggan Berdasarkan Total Pengeluaran
+
+```{r top-customer}
+top_customers <- payment %>%
+  group_by(customer_id) %>%
+  summarise(total = sum(amount), .groups = "drop") %>%
+  left_join(customer %>% mutate(nama = paste(first_name, last_name)),
+            by = "customer_id") %>%
+  arrange(desc(total)) %>%
+  slice_head(n = 15)
+
+ggplot(top_customers, aes(x = reorder(nama, total), y = total)) +
+  geom_col(fill = "#8e44ad", alpha = 0.85) +
+  geom_text(aes(label = dollar(round(total, 2))), hjust = -0.08, size = 3.1) +
+  coord_flip() +
+  scale_y_continuous(labels = label_dollar(),
+                     expand = expansion(mult = c(0, 0.22))) +
+  labs(title    = "Top 15 Pelanggan Berdasarkan Total Pengeluaran",
+       subtitle = "Pelanggan ini umumnya memiliki profil frekuensi tinggi dan kemungkinan masuk segmen aktif",
+       x = NULL, y = "Total Pengeluaran (USD)")
+```
+
+## Analisis Korelasi RFM
+
+```{r rfm-corr-prep}
+# Hitung RFM sementara untuk korelasi (sebelum normalisasi)
+recency_tmp <- rental %>%
+  group_by(customer_id) %>%
+  summarise(last_rental = max(rental_date, na.rm = TRUE), .groups = "drop") %>%
+  mutate(recency = as.numeric(difftime(ref_date, last_rental, units = "days")))
+
+frequency_tmp <- rental %>%
+  group_by(customer_id) %>%
+  summarise(frequency = n(), .groups = "drop")
+
+monetary_tmp <- payment %>%
+  group_by(customer_id) %>%
+  summarise(monetary = sum(amount, na.rm = TRUE), .groups = "drop")
+
+rfm_tmp <- recency_tmp %>%
+  inner_join(frequency_tmp, by = "customer_id") %>%
+  inner_join(monetary_tmp,  by = "customer_id") %>%
+  select(recency, frequency, monetary)
+
+cor_mat <- cor(rfm_tmp, method = "spearman")
+
+cor_long <- as.data.frame(as.table(cor_mat)) %>%
+  rename(Var1 = Var1, Var2 = Var2, corr = Freq)
+
+ggplot(cor_long, aes(x = Var1, y = Var2, fill = corr)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = round(corr, 3)), size = 4.5, fontface = "bold") +
+  scale_fill_gradient2(low = "#e74c3c", mid = "white", high = "#2980b9",
+                       midpoint = 0, limits = c(-1, 1),
+                       name = "Spearman\nCorrelation") +
+  labs(title    = "Matriks Korelasi Spearman antar Variabel RFM",
+       subtitle = "Korelasi Spearman digunakan karena distribusi RFM tidak memenuhi asumsi normalitas",
+       x = NULL, y = NULL) +
+  theme(axis.text = element_text(size = 12))
+```
+
+<div class="insight-box">
+**Interpretasi Korelasi:** Korelasi Spearman dipilih karena distribusi Recency yang berpola bimodal tidak memenuhi asumsi normalitas yang diperlukan untuk korelasi Pearson. Korelasi antara Frequency dan Monetary umumnya bernilai positif moderat, yang sejalan dengan ekspektasi bahwa pelanggan yang lebih sering bertransaksi cenderung memiliki akumulasi pembayaran yang lebih tinggi. Korelasi antara Recency dan dua dimensi lainnya biasanya bernilai lemah atau sedikit negatif, yang mengindikasikan bahwa ketiga dimensi ini membawa informasi yang sebagian bersifat independen satu sama lain.
+</div>
+
+---
+
+# Perhitungan Skor RFM
+
+## Definisi Formal
+
+$$\text{Recency}(c) = T_{\text{ref}} - \max_{i: \text{cust}_i = c}\{T_{\text{rental},i}\} \quad \text{(hari)}$$
+
+$$\text{Frequency}(c) = \left|\{i : \text{cust}_i = c\}\right| \quad \text{(jumlah transaksi)}$$
+
+$$\text{Monetary}(c) = \sum_{i: \text{cust}_i = c} \text{amount}_i \quad \text{(USD)}$$
+
+di mana $T_{\text{ref}}$ adalah tanggal referensi (T+1 dari transaksi terakhir), dan $c$ adalah identitas pelanggan.
+
+```{r rfm-calc}
+# Recency: jarak hari dari tanggal referensi
+recency_df <- rental %>%
+  group_by(customer_id) %>%
+  summarise(last_rental = max(rental_date, na.rm = TRUE), .groups = "drop") %>%
+  mutate(recency = as.numeric(difftime(ref_date, last_rental, units = "days")))
+
+# Frequency: jumlah transaksi rental
+frequency_df <- rental %>%
+  group_by(customer_id) %>%
+  summarise(frequency = n(), .groups = "drop")
+
+# Monetary: total pembayaran kumulatif
+monetary_df <- payment %>%
+  group_by(customer_id) %>%
+  summarise(monetary = sum(amount, na.rm = TRUE), .groups = "drop")
+
+# Gabungkan — inner_join memastikan hanya pelanggan dengan ketiga data lengkap
+rfm <- recency_df %>%
+  inner_join(frequency_df, by = "customer_id") %>%
+  inner_join(monetary_df,  by = "customer_id") %>%
+  select(customer_id, recency, frequency, monetary)
+
+cat(sprintf("Pelanggan dengan RFM lengkap: %d\n", nrow(rfm)))
+```
+
+## Statistik Deskriptif RFM
+
+```{r rfm-stats}
+# Statistik deskriptif dengan tambahan SD dan CV
+rfm_desc <- rfm %>%
+  select(recency, frequency, monetary) %>%
+  summarise(across(everything(), list(
+    Min    = min,
+    Q1     = ~quantile(., 0.25),
+    Median = median,
+    Mean   = mean,
+    Q3     = ~quantile(., 0.75),
+    Max    = max,
+    SD     = sd,
+    CV     = ~round(sd(.) / mean(.), 3)
+  ), .names = "{.col}__{.fn}")) %>%
+  pivot_longer(everything(), names_to = c("Variabel", "Statistik"),
+               names_sep = "__") %>%
+  pivot_wider(names_from = Statistik, values_from = value) %>%
+  mutate(across(where(is.numeric), ~round(., 2)))
+
+rfm_desc %>%
+  kable(caption = "Statistik Deskriptif Tiga Dimensi RFM") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE)
+```
+
+<div class="warning-box">
+**Catatan pola Recency:** Nilai Recency memperlihatkan struktur yang tidak seragam: sebagian pelanggan memiliki Recency sangat rendah (transaksi sangat baru, sekitar 1 hari), sementara sebagian lain memiliki Recency sangat tinggi (sekitar 176–183 hari, menandakan tidak aktif dalam kurang lebih 6 bulan). Pola ini merupakan konsekuensi dari struktur historis database Sakila yang mencatat dua periode aktivitas transaksi yang terpisah (Mei–Agustus 2005 dan Februari 2006). Hal ini perlu diperhatikan dalam interpretasi hasil clustering, mengingat pola ini tidak selalu mencerminkan perilaku pelanggan yang organik pada bisnis nyata.
+</div>
+
+## Distribusi Tiga Dimensi RFM
+
+```{r rfm-dist, fig.height=4.5}
+rfm_long <- rfm %>%
+  select(recency, frequency, monetary) %>%
+  pivot_longer(everything(), names_to = "metrik", values_to = "nilai") %>%
+  mutate(metrik = factor(metrik,
+                         levels = c("recency", "frequency", "monetary"),
+                         labels = c("Recency (hari)", "Frequency (kali)", "Monetary (USD)")))
+
+ggplot(rfm_long, aes(x = nilai, fill = metrik)) +
+  geom_histogram(bins = 30, color = "white", alpha = 0.85, show.legend = FALSE) +
+  facet_wrap(~metrik, scales = "free", nrow = 1) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title    = "Distribusi Tiga Dimensi RFM",
+       subtitle = "Recency: pola bimodal | Frequency: distribusi relatif simetris | Monetary: mendekati simetris",
+       x = NULL, y = "Jumlah Pelanggan")
+```
+
+## Boxplot dan Deteksi Outlier
+
+```{r rfm-boxplot, fig.height=4.5}
+ggplot(rfm_long, aes(x = metrik, y = nilai, fill = metrik)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "#e74c3c",
+               outlier.alpha = 0.6, outlier.size = 1.8,
+               show.legend = FALSE) +
+  facet_wrap(~metrik, scales = "free", nrow = 1) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title    = "Boxplot Distribusi RFM — Identifikasi Outlier",
+       subtitle = "Titik merah = observasi di luar 1.5×IQR | IQR Recency melebar akibat pola distribusinya",
+       x = NULL, y = "Nilai")
+```
+
+---
+
+# Normalisasi Data
+
+## Justifikasi Min-Max Scaling
+
+<div class="theory-box">
+K-Means menggunakan jarak Euclidean sebagai ukuran kemiripan antar observasi. Tanpa normalisasi, variabel dengan satuan dan rentang nilai yang lebih besar akan mendominasi perhitungan jarak, sehingga kontribusi variabel lain menjadi relatif kecil. Dalam kasus ini, Recency dalam satuan hari berpotensi mendominasi jika tidak dinormalisasi.
+
+Min-Max scaling mentransformasi setiap variabel ke rentang [0, 1]:
+
+$$x_{\text{norm}} = \frac{x - x_{\min}}{x_{\max} - x_{\min}}$$
+
+Khusus untuk Recency, nilai hasil transformasi dibalik menjadi $r_{\text{norm}} = 1 - \text{MinMax}(R)$, sehingga nilai yang mendekati 1 merepresentasikan pelanggan dengan transaksi lebih baru — konsisten dengan konvensi RFM di mana skor lebih tinggi mencerminkan kondisi yang lebih menguntungkan secara bisnis.
+
+Perlu diperhatikan bahwa Min-Max scaling sensitif terhadap nilai ekstrem (outlier), karena menggunakan nilai minimum dan maksimum sebagai acuan. Jika terdapat outlier pada data, rentang normalisasi dapat menjadi sangat lebar dan memampatkan sebagian besar data ke area sempit.
+</div>
+
+```{r normalize}
+normalize <- function(x) (x - min(x)) / (max(x) - min(x))
+
+rfm_scaled <- rfm %>%
+  mutate(
+    r_norm = 1 - normalize(recency),   # dibalik: recency kecil = lebih baik
+    f_norm = normalize(frequency),
+    m_norm = normalize(monetary)
+  )
+
+rfm_matrix <- rfm_scaled %>%
+  select(r_norm, f_norm, m_norm) %>%
+  as.matrix()
+
+cat(sprintf("Dimensi matrix input: %d baris × %d kolom\n", nrow(rfm_matrix), ncol(rfm_matrix)))
+cat(sprintf("r_norm: %.3f – %.3f\n", min(rfm_matrix[,1]), max(rfm_matrix[,1])))
+cat(sprintf("f_norm: %.3f – %.3f\n", min(rfm_matrix[,2]), max(rfm_matrix[,2])))
+cat(sprintf("m_norm: %.3f – %.3f\n", min(rfm_matrix[,3]), max(rfm_matrix[,3])))
+```
+
+---
+
+# Penentuan Jumlah Cluster Optimal
+
+## Metode Elbow (WSS)
+
+```{r elbow, fig.height=4.5}
+set.seed(123)
+wss <- map_dbl(1:10, ~{
+  kmeans(rfm_matrix, centers = .x, nstart = 25, iter.max = 100)$tot.withinss
+})
+
+elbow_df <- tibble(k = 1:10, wss = wss)
+
+# Estimasi elbow via second-derivative WSS
+delta1  <- diff(wss)
+delta2  <- diff(delta1)
+k_elbow <- which.min(delta2) + 1
+
+ggplot(elbow_df, aes(x = k, y = wss)) +
+  geom_line(color = "#2980b9", linewidth = 1.3) +
+  geom_point(size = 3.5, color = "#2980b9") +
+  geom_point(data = elbow_df[k_elbow, ], size = 5,
+             shape = 21, color = "#e74c3c", fill = "white", stroke = 2) +
+  annotate("label", x = k_elbow + 0.6, y = wss[k_elbow] + diff(range(wss)) * 0.08,
+           label = paste0("Elbow ≈ k=", k_elbow),
+           color = "#e74c3c", size = 3.5, fontface = "bold") +
+  scale_x_continuous(breaks = 1:10) +
+  scale_y_continuous(labels = comma) +
+  labs(title    = "Metode Elbow — Total WSS vs Jumlah Cluster",
+       subtitle  = "Titik merah = estimasi elbow via second-derivative | Penurunan WSS melambat di titik ini",
+       x = "Jumlah Cluster (k)", y = "Total Within-Cluster SS")
+```
+
+<div class="insight-box">
+**Interpretasi WSS:** Dari k=1 ke k=2, terlihat penurunan WSS yang cukup besar — hal ini konsisten dengan adanya dua kelompok yang terbentuk dari perbedaan pola Recency. Setelah k=2, penurunan WSS relatif lebih landai. Pola ini memberikan indikasi awal bahwa k=2 mungkin merupakan pilihan yang efisien, meskipun interpretasi titik elbow tetap memiliki unsur subjektif dan perlu dikonfirmasi dengan metode validasi lain.
+</div>
+
+## Metode Silhouette
+
+```{r silhouette, fig.height=4.5}
+set.seed(123)
+sil_scores <- map_dbl(2:8, ~{
+  km <- kmeans(rfm_matrix, centers = .x, nstart = 25, iter.max = 100)
+  ss <- silhouette(km$cluster, dist(rfm_matrix))
+  mean(ss[, 3])
+})
+
+sil_df   <- tibble(k = 2:8, silhouette = sil_scores)
+k_sil    <- sil_df$k[which.max(sil_df$silhouette)]
+sil_best <- round(max(sil_df$silhouette), 4)
+
+ggplot(sil_df, aes(x = k, y = silhouette)) +
+  geom_line(color = "#27ae60", linewidth = 1.3) +
+  geom_point(size = 3.5, color = "#27ae60") +
+  geom_point(data = sil_df[which.max(sil_df$silhouette), ],
+             size = 5, shape = 21, color = "#e74c3c",
+             fill = "white", stroke = 2) +
+  annotate("label", x = k_sil + 0.6,
+           y = sil_best - 0.06,
+           label = paste0("k=", k_sil, "\nSkor=", sil_best),
+           color = "#e74c3c", size = 3.3, fontface = "bold") +
+  scale_x_continuous(breaks = 2:8) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1)) +
+  geom_hline(yintercept = 0.7, linetype = "dashed",
+             color = "#8e44ad", alpha = 0.6) +
+  annotate("text", x = 7.5, y = 0.72,
+           label = "0.7 (strong)", color = "#8e44ad", size = 3) +
+  labs(title    = "Metode Silhouette — Validasi Jumlah Cluster",
+       subtitle = "Nilai mendekati 1 menunjukkan pemisahan cluster yang baik | Garis ungu = ambang referensi 0.7",
+       x = "Jumlah Cluster (k)", y = "Rata-rata Silhouette Score")
+
+cat(sprintf("Silhouette tertinggi: k = %d | skor = %.4f\n", k_sil, sil_best))
+```
+
+## Penetapan k Final
+
+```{r k-final}
+# Kedua metode (Elbow dan Silhouette) mengarah pada k=2,
+# yang selaras dengan pola distribusi Recency yang bimodal.
+# k=2 dipilih sebagai keputusan berbasis data.
+k_chosen <- k_sil
+cat(sprintf("Jumlah cluster yang digunakan: k = %d\n", k_chosen))
+cat(sprintf("Justifikasi: Silhouette score %.4f >= 0.70 (indikasi struktur cluster yang cukup baik)\n", sil_best))
+cat(sprintf("             Elbow method menunjukkan perlambatan penurunan WSS di k=%d\n", k_elbow))
+```
+
+<div class="insight-box">
+**Keputusan k = `r k_chosen`:** Kedua metode — Elbow dan Silhouette — memberikan indikasi yang mengarah pada k=`r k_chosen`. Silhouette rata-rata sebesar **`r sil_best`** berada di atas ambang 0.7 yang disarankan oleh Kaufman & Rousseeuw (1990) sebagai indikasi struktur cluster yang cukup baik. Hasil ini kemungkinan dipengaruhi oleh pola bimodal Recency yang memisahkan pelanggan berdasarkan aktivitas transaksi terakhir mereka. Dimensi Frequency dan Monetary turut berkontribusi dalam membentuk posisi centroid, meskipun pengaruhnya relatif lebih kecil dibandingkan Recency pada dataset ini.
+</div>
+
+---
+
+# K-Means Clustering
+
+## Eksekusi Algoritma
+
+```{r kmeans}
+set.seed(123)
+km_final <- kmeans(rfm_matrix, centers = k_chosen,
+                   nstart = 50, iter.max = 200)
+
+# Gabungkan nilai RFM asli + normalized + label cluster
+rfm_clustered <- rfm %>%
+  mutate(
+    r_norm  = rfm_scaled$r_norm,
+    f_norm  = rfm_scaled$f_norm,
+    m_norm  = rfm_scaled$m_norm,
+    cluster = as.factor(km_final$cluster)
+  )
+
+cat("Distribusi pelanggan per cluster:\n")
+print(table(rfm_clustered$cluster))
+
+# Rasio between-SS / total-SS
+bss_ratio <- round(km_final$betweenss / km_final$totss * 100, 2)
+cat(sprintf("\nBetween-SS / Total-SS: %.2f%%\n", bss_ratio))
+cat(sprintf("Interpretasi: Clustering menjelaskan %.2f%% variansi total RFM\n", bss_ratio))
+```
+
+<div class="insight-box">
+**Between-SS / Total-SS** mengukur proporsi variansi total yang dapat dijelaskan oleh struktur cluster — konsepnya serupa dengan R² dalam regresi. Nilai yang lebih tinggi menunjukkan bahwa cluster yang terbentuk saling terpisah dengan cukup baik. Pada dataset Sakila dengan k=2, nilai ini cenderung tinggi karena perbedaan Recency yang cukup kontras antara dua kelompok pelanggan.
+</div>
+
+## Centroid Cluster
+
+```{r centroid}
+centroid_df <- as.data.frame(km_final$centers) %>%
+  mutate(cluster = factor(1:k_chosen)) %>%
+  relocate(cluster)
+
+colnames(centroid_df) <- c("Cluster", "r_norm", "f_norm", "m_norm")
+
+centroid_df %>%
+  kable(caption = "Centroid Cluster (Nilai Normalisasi 0–1)",
+        digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+## Validasi: Silhouette per Cluster
+
+```{r sil-validation}
+sil_final   <- silhouette(km_final$cluster, dist(rfm_matrix))
+sil_summary <- summary(sil_final)
+
+cat(sprintf("Silhouette keseluruhan  : %.4f\n", round(mean(sil_final[,3]), 4)))
+cat("Silhouette per cluster:\n")
+for (i in seq_along(sil_summary$clus.avg.widths)) {
+  cat(sprintf("  Cluster %d: %.4f\n", i, sil_summary$clus.avg.widths[i]))
+}
+```
+
+## Silhouette Plot
+
+```{r sil-plot, fig.height=4.5}
+fviz_silhouette(sil_final, palette = "jco",
+                ggtheme = theme_minimal(base_size = 12)) +
+  labs(title    = "Silhouette Plot — Kualitas Cluster K-Means",
+       subtitle = "Batang negatif (ke kiri) = pelanggan yang mungkin lebih sesuai di cluster lain") +
+  theme(plot.title = element_text(face = "bold", color = "#1a5276"))
+```
+
+## Profil Rata-Rata RFM per Cluster
+
+```{r cluster-profile}
+cluster_profile <- rfm_clustered %>%
+  group_by(cluster) %>%
+  summarise(
+    n_pelanggan  = n(),
+    recency_avg  = round(mean(recency),   1),
+    freq_avg     = round(mean(frequency), 1),
+    monetary_avg = round(mean(monetary),  2),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    sil_avg = round(
+      sapply(as.integer(cluster), function(cl)
+        mean(sil_final[km_final$cluster == cl, 3])), 3)
+  )
+
+# ── Labeling berbasis nilai recency aktual ──────────────────────────────────
+# Cluster dengan recency_avg terkecil = pelanggan lebih baru → "Active Customers"
+# Cluster dengan recency_avg terbesar = pelanggan lebih lama tidak aktif → "Inactive Customers"
+cluster_profile <- cluster_profile %>%
+  mutate(
+    label = if_else(recency_avg == min(recency_avg),
+                    "Active Customers",
+                    "Inactive Customers")
+  )
+
+# Simpan label_map untuk join berikutnya
+label_map <- cluster_profile %>% select(cluster, label)
+
+cluster_profile %>%
+  select(cluster, label, n_pelanggan, recency_avg,
+         freq_avg, monetary_avg, sil_avg) %>%
+  kable(
+    caption   = "Profil RFM dan Kualitas Cluster",
+    col.names = c("Cluster", "Label", "N Pelanggan",
+                  "Recency (hr)", "Frequency", "Monetary ($)", "Sil. Avg"),
+    digits    = 3
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "bordered"),
+                full_width = TRUE) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#1a5276")
+```
+
+<div class="insight-box">
+**Interpretasi profil cluster:** Dengan k=2, perbedaan paling menonjol antara kedua cluster terletak pada dimensi Recency. Satu cluster berisi pelanggan yang baru-baru ini aktif (Recency rendah), sedangkan cluster lain berisi pelanggan yang sudah lama tidak bertransaksi. Meskipun demikian, perbedaan pada Frequency dan Monetary juga turut berkontribusi dan perlu diamati untuk memahami nilai bisnis masing-masing segmen secara lebih lengkap.
+</div>
+
+---
+
+# Visualisasi Hasil Clustering
+
+```{r prep-plot}
+# Palette warna konsisten sepanjang laporan
+pal_cluster <- c("#2980b9", "#e67e22")   # Biru untuk aktif, oranye untuk tidak aktif
+
+rfm_plot <- rfm_clustered %>%
+  left_join(label_map, by = "cluster")
+```
+
+## Scatter Plot: Recency vs Frequency
+
+```{r scatter-rf, fig.height=5}
+ggplot(rfm_plot, aes(x = recency, y = frequency, color = label)) +
+  geom_point(alpha = 0.55, size = 2.3) +
+  scale_color_manual(values = pal_cluster) +
+  geom_vline(xintercept = 90, linetype = "dashed",
+             color = "#e74c3c", alpha = 0.5) +
+  annotate("text", x = 95, y = max(rfm_plot$frequency) * 0.95,
+           label = "Batas ~90 hari", color = "#e74c3c",
+           size = 3.2, hjust = 0) +
+  labs(title    = "Segmentasi: Recency vs Frequency",
+       subtitle = "Pemisahan antara dua cluster terlihat cukup jelas pada dimensi Recency",
+       x = "Recency (hari sejak rental terakhir)",
+       y = "Frequency (jumlah rental)",
+       color = "Segmen")
+```
+
+## Scatter Plot: Frequency vs Monetary
+
+```{r scatter-fm, fig.height=5}
+ggplot(rfm_plot, aes(x = frequency, y = monetary, color = label)) +
+  geom_point(alpha = 0.55, size = 2.3) +
+  scale_color_manual(values = pal_cluster) +
+  scale_y_continuous(labels = label_dollar()) +
+  labs(title    = "Segmentasi: Frequency vs Monetary",
+       subtitle = "Korelasi positif antara Frequency dan Monetary tampak pada kedua segmen",
+       x = "Frequency (jumlah rental)",
+       y = "Monetary (total pembayaran, USD)",
+       color = "Segmen")
+```
+
+## Heatmap Profil Cluster
+
+```{r heatmap-cluster, fig.height=4}
+heatmap_df <- rfm_plot %>%
+  group_by(label) %>%
+  summarise(
+    Recency   = mean(r_norm),
+    Frequency = mean(f_norm),
+    Monetary  = mean(m_norm),
+    .groups   = "drop"
+  ) %>%
+  pivot_longer(-label, names_to = "metrik", values_to = "nilai_norm")
+
+ggplot(heatmap_df, aes(x = metrik, y = label, fill = nilai_norm)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = sprintf("%.3f", nilai_norm)),
+            size = 5, fontface = "bold", color = "white") +
+  scale_fill_gradient(low = "#aed6f1", high = "#1a5276",
+                      limits = c(0, 1), name = "Skor\nNormalisasi") +
+  labs(title    = "Heatmap Profil Segmen — Nilai Normalisasi [0, 1]",
+       subtitle = "Recency sudah dibalik: nilai tinggi = transaksi lebih baru | Perbedaan antar segmen terlihat pada ketiga dimensi",
+       x = "Dimensi RFM", y = NULL)
+```
+
+## Komposisi Segmen
+
+```{r komposisi, fig.height=5}
+komposisi <- rfm_plot %>%
+  count(label) %>%
+  mutate(
+    pct       = n / sum(n),
+    label_pie = sprintf("%s\n%d pelanggan\n(%.1f%%)", label, n, pct * 100)
+  )
+
+ggplot(komposisi, aes(x = "", y = n, fill = label)) +
+  geom_col(width = 1, color = "white", linewidth = 0.8) +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label_pie),
+            position = position_stack(vjust = 0.5),
+            size = 4, lineheight = 1.3, fontface = "bold") +
+  scale_fill_manual(values = pal_cluster) +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 14,
+                              color = "#1a5276", hjust = 0.5)
+  ) +
+  labs(title = "Komposisi Segmen Pelanggan")
+```
+
+## Visualisasi PCA 2D
+
+```{r pca-cluster, fig.height=5.5}
+fviz_cluster(km_final,
+             data         = rfm_matrix,
+             geom         = "point",
+             ellipse.type = "convex",
+             palette      = pal_cluster,
+             ggtheme      = theme_minimal(base_size = 12),
+             main         = "Visualisasi K-Means Cluster (Proyeksi PCA 2D)") +
+  labs(subtitle = "PC1 dan PC2 merupakan kombinasi linear RFM yang menjelaskan variansi terbesar") +
+  theme(plot.title    = element_text(face = "bold", color = "#1a5276"),
+        plot.subtitle = element_text(color = "#666"))
+```
+
+<div class="insight-box">
+**Catatan PCA:** Proyeksi PCA mereduksi tiga dimensi RFM menjadi dua komponen utama untuk keperluan visualisasi. Pola pemisahan kedua cluster yang terlihat pada plot ini mendukung hasil segmentasi K-Means, meskipun perlu diingat bahwa proyeksi dua dimensi tidak sepenuhnya merepresentasikan jarak dalam ruang tiga dimensi aslinya. Elips konveks pada visualisasi ini merepresentasikan batas terluar tiap cluster, bukan interval kepercayaan statistik.
+</div>
+
+---
+
+# Interpretasi Segmen
+
+<div class="warning-box">
+**Prinsip interpretasi:** Seluruh narasi di bawah ini didasarkan pada nilai rata-rata RFM aktual dari data, bukan asumsi generik. Mengingat data Sakila adalah *sample database* dengan karakteristik historis tertentu, interpretasi bisnis yang disampaikan bersifat kontekstual dan perlu disesuaikan apabila diterapkan pada data operasional nyata.
+</div>
+
+```{r interpretasi-tabel}
+# Tabel interpretasi dari cluster_profile yang sudah memiliki kolom label
+interp_df <- cluster_profile %>%
+  mutate(
+    Karakteristik = sprintf(
+      "Recency rata-rata %.1f hari | Frequency rata-rata %.1f kali | Monetary rata-rata $%.2f | Sil. avg %.3f",
+      recency_avg, freq_avg, monetary_avg, sil_avg
+    ),
+    Strategi = dplyr::case_when(
+      label == "Active Customers"   ~
+        "Pertahankan keterlibatan pelanggan melalui program loyalitas berbasis frekuensi transaksi. Tawarkan rekomendasi film yang relevan berdasarkan histori genre yang paling sering disewa. Komunikasi yang dipersonalisasi dapat membantu memperpanjang siklus transaksi.",
+      label == "Inactive Customers" ~
+        "Pertimbangkan kampanye reaktivasi dengan insentif seperti diskon untuk rental pertama setelah kembali aktif. Lakukan survei singkat untuk memahami alasan ketidakaktifan. Evaluasi ROI kampanye sebelum eskalasi skala penuh.",
+      TRUE ~ "-"
+    )
+  ) %>%
+  select(Segmen = label, Karakteristik, Strategi)
+
+# Warna per baris (dinamis mengikuti jumlah baris)
+warna_baris <- pal_cluster[seq_len(nrow(interp_df))]
+
+tbl <- kable(interp_df,
+             caption = "Interpretasi dan Pendekatan Bisnis per Segmen") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "bordered"),
+                full_width = TRUE) %>%
+  column_spec(2, italic = FALSE, width = "35%") %>%
+  column_spec(3, italic = TRUE,  width = "40%")
+
+for (i in seq_len(nrow(interp_df))) {
+  tbl <- row_spec(tbl, i, bold = TRUE, color = "white",
+                  background = warna_baris[i])
+}
+tbl
+```
+
+---
+
+# Rekomendasi Bisnis
+
+<div class="insight-box">
+
+## Temuan Utama Berbasis Data
+
+**1. Recency sebagai dimensi pembeda utama pada dataset ini**
+Segmentasi k=2 yang dihasilkan data menunjukkan bahwa dimensi yang paling membedakan kedua cluster adalah *kapan* terakhir pelanggan bertransaksi. Hal ini kemungkinan dipengaruhi oleh struktur historis database Sakila yang mencatat dua periode aktivitas berbeda. Pada data bisnis nyata, pola ini tidak selalu terulang dengan cara yang sama, sehingga interpretasi perlu dilakukan secara hati-hati.
+
+**2. Active Customers: `r cluster_profile$n_pelanggan[cluster_profile$label == "Active Customers"]` pelanggan**
+Kelompok ini memiliki Recency yang rendah, menunjukkan aktivitas transaksi yang relatif baru. Rata-rata Frequency `r cluster_profile$freq_avg[cluster_profile$label == "Active Customers"]` kali dan Monetary $`r cluster_profile$monetary_avg[cluster_profile$label == "Active Customers"]` menggambarkan keterlibatan yang cukup konsisten. Fokus strategi untuk segmen ini adalah mempertahankan keterlibatan yang sudah ada.
+
+**3. Inactive Customers: `r cluster_profile$n_pelanggan[cluster_profile$label == "Inactive Customers"]` pelanggan**
+Kelompok ini tidak bertransaksi dalam periode yang cukup panjang (~6 bulan). Sebelum memutuskan investasi kampanye reaktivasi, perlu dipertimbangkan apakah nilai Monetary rata-rata mereka mencukupi untuk membenarkan biaya reaktivasi dibandingkan mengakuisisi pelanggan baru.
+
+## Rekomendasi Operasional
+
+| # | Segmen | Aksi Spesifik | Metrik Keberhasilan |
+|---|--------|---------------|---------------------|
+| 1 | Active | Program poin per rental dengan insentif di ambang frekuensi tertentu | Peningkatan frekuensi rata-rata 10% dalam 3 bulan |
+| 2 | Active | Rekomendasi film mingguan berbasis histori genre sewa | Tingkat klik (CTR) email > 20% |
+| 3 | Inactive | Diskon untuk 2–3 rental pertama setelah reaktivasi | Tingkat reaktivasi > 15% dalam 30 hari |
+| 4 | Inactive | Survei singkat 3 pertanyaan: alasan berhenti, preferensi saat ini, hambatan kembali | Response rate > 10% |
+| 5 | Semua | Perbarui segmentasi secara berkala (misalnya bulanan) untuk memantau perubahan profil | Proporsi Active stabil atau meningkat setiap kuartal |
+
+</div>
+
+---
+
+# Keterbatasan Analisis
+
+<div class="limit-box">
+
+1. **Karakteristik data Sakila sebagai sample database:** Pola bimodal Recency bukan merupakan refleksi perilaku pelanggan yang organik, melainkan konsekuensi dari cara pengisian database sampel yang mencatat dua periode transaksi terpisah. Hasil segmentasi pada data operasional nyata kemungkinan akan menghasilkan distribusi Recency yang lebih kontinu dan profil cluster yang berbeda.
+
+2. **Granularitas terbatas dengan k=2:** Dua segmen mungkin belum cukup untuk menangkap keragaman perilaku pelanggan secara lebih rinci. Dari sudut pandang perencanaan kampanye, analis dapat mempertimbangkan k=3 atau k=4 sebagai opsi alternatif, dengan mempertimbangkan bahwa Silhouette score kemungkinan akan menurun.
+
+3. **Sensitivitas K-Means terhadap outlier:** K-Means menggunakan rata-rata dalam perhitungan centroid, sehingga pelanggan dengan nilai Monetary atau Frequency yang ekstrem dapat mempengaruhi posisi centroid. Alternatif seperti K-Medoids (PAM) lebih tahan terhadap pengaruh outlier.
+
+4. **Tidak ada faktor produk atau kontekstual:** Analisis ini murni berbasis metrik transaksi tanpa mempertimbangkan preferensi genre, rating film, lokasi pelanggan, atau pola musiman. Penambahan fitur kontekstual berpotensi menghasilkan profil segmen yang lebih informatif.
+
+5. **Snapshot statis:** Nilai RFM dihitung pada satu titik waktu. Pendekatan RFM dengan *rolling window* yang diperbarui secara berkala akan memberikan gambaran yang lebih dinamis tentang perubahan perilaku pelanggan dari waktu ke waktu.
+
+</div>
+
+---
+
+# Kesimpulan
+
+Analisis segmentasi pelanggan berbasis RFM dan K-Means Clustering terhadap database Sakila menghasilkan beberapa temuan sebagai berikut:
+
+1. **Distribusi RFM tidak seragam:** Recency menunjukkan pola bimodal yang merupakan karakteristik struktural dari database Sakila, dengan dua kelompok yang mencerminkan dua periode aktivitas transaksi yang berbeda. Frequency (rentang 12–46 kali) dan Monetary ($50–$221) memiliki distribusi yang lebih simetris dengan variasi moderat.
+
+2. **Jumlah cluster yang dipilih adalah k=`r k_chosen`**, berdasarkan indikasi dari Elbow Method dan nilai Silhouette tertinggi. Silhouette rata-rata sebesar **`r sil_best`** menunjukkan pemisahan cluster yang cukup baik menurut ambang referensi Kaufman & Rousseeuw (1990), meskipun hal ini juga dipengaruhi oleh pola distribusi Recency pada dataset ini.
+
+3. **Labeling cluster dilakukan berdasarkan nilai Recency aktual**, di mana cluster dengan Recency rata-rata lebih rendah diberi label *Active Customers* dan cluster dengan Recency rata-rata lebih tinggi diberi label *Inactive Customers*. Pendekatan ini menjamin konsistensi labeling yang tidak bergantung pada urutan output algoritma.
+
+4. **Dimensi Frequency dan Monetary turut membedakan kedua segmen**, meskipun kontribusinya lebih kecil dibandingkan Recency pada dataset ini. Hal ini perlu dipertimbangkan agar strategi bisnis tidak hanya berfokus pada dimensi waktu, tetapi juga pada nilai transaksi.
+
+5. **Validasi kuantitatif dilakukan** melalui Silhouette plot per cluster, rasio Between-SS/Total-SS, dan analisis centroid — sebagai landasan untuk interpretasi yang lebih dapat dipertanggungjawabkan secara statistik.
+
+---
+
+# Saran
+
+1. **Eksplorasi granularitas k=3:** Jalankan analisis dengan k=3 untuk mengevaluasi apakah segmen *Inactive Customers* dapat dibagi menjadi sub-kelompok yang lebih bermakna secara bisnis, misalnya berdasarkan perbedaan nilai Monetary.
+
+2. **Integrasi fitur produk:** Tambahkan informasi seperti genre film yang paling sering disewa, jumlah kategori yang diakses, atau rata-rata lama peminjaman — untuk memperkaya profil segmen di luar dimensi transaksi.
+
+3. **Segmentasi dinamis dengan rolling window:** Bangun proses yang menghitung ulang RFM secara berkala (misalnya bulanan) dan melacak pergerakan pelanggan antar segmen dari waktu ke waktu.
+
+4. **Perbandingan metode clustering:** Jalankan K-Medoids (PAM) dan hierarchical clustering (Ward's linkage) pada data yang sama, lalu bandingkan kualitas cluster dan interpretasi bisnisnya untuk mengevaluasi ketahanan hasil segmentasi.
+
+5. **Uji kampanye pada sub-sampel:** Sebelum menerapkan strategi reaktivasi ke seluruh *Inactive Customers*, uji terlebih dahulu pada sebagian kecil (misalnya 20%) secara acak. Ukur tingkat reaktivasi dan hitung perkiraan ROI sebelum perluasan skala.
+
+---
+
+# Referensi
+
+- Hughes, A. M. (1994). *Strategic Database Marketing*. Probus Publishing Company.
+- Kotler, P., & Keller, K. L. (2016). *Marketing Management* (15th ed.). Pearson Education.
+- MySQL AB. (2006). *Sakila Sample Database Documentation*. https://dev.mysql.com/doc/sakila/en/
+- Hartigan, J. A., & Wong, M. A. (1979). Algorithm AS 136: A K-Means Clustering Algorithm. *Applied Statistics*, 28(1), 100–108.
+- Rousseeuw, P. J. (1987). Silhouettes: A graphical aid to the interpretation and validation of cluster analysis. *Journal of Computational and Applied Mathematics*, 20, 53–65.
+- Kaufman, L., & Rousseeuw, P. J. (1990). *Finding Groups in Data: An Introduction to Cluster Analysis*. John Wiley & Sons.
+
+---
+
+<center>
+<small>
+Laporan dibuat menggunakan **R Markdown** | Program Studi Statistika – FMIPA<br>
+Universitas Sebelas Maret | *Case Method 1 – Sistem Informasi Manajemen*
+</small>
+</center>
